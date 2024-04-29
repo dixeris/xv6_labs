@@ -1,21 +1,24 @@
 #include "types.h"
 #include "user.h"
+#include "processInfo.h"
 
-
-void thread_func(void* arg1, void* arg2) {
-
-  int pid = getpid();
-printf(1,"child thread pid is %d\n", pid);     
-printf(1,"arg1 = %d, arg2 = %d\n", (int*)arg1, (int*)arg2);
-exit();
-}
 
 int main(void) {
-  int arg1 = 11;
-  int arg2 = 22;
-  thread_create((void(*)(void*,void*))&thread_func, &arg1, &arg2);
-  thread_join();
-  int pid = getpid();
-  printf(1,"parent pid is %d\n", pid);
+  struct processInfo pinfo;  
+  
+  printf(1,"number of processes = %d\n", getNumProc());
+  int maxpid  = getMaxPid(); 
+  printf(1,"MaxPid among the processes = %d\n", maxpid);
+
+  if(getProcInfo(maxpid,&pinfo) == -1) {
+    printf(1,"Error: maxpid %d not found\n", maxpid);    
+  }
+  printf(1,"cscnt = %d\n", pinfo.numberContextSwitches);
+
+  printf(1,"size = %d\n", pinfo.psize);
+  printf(1,"ppid = %d\n", pinfo.ppid);
+  
+
+  
 }
 

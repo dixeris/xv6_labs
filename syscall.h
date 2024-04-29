@@ -24,3 +24,6 @@
 #define SYS_munprotect 23
 #define SYS_clone 24
 #define SYS_join 25
+#define SYS_getNumProc 26
+#define SYS_getMaxPid 27
+#define SYS_getProcInfo 28

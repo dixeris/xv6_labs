@@ -6,6 +6,7 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
+#include "processInfo.h"
 
 struct {
   struct spinlock lock;
@@ -88,6 +89,7 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
+  p->cscnt = 0;
 
   release(&ptable.lock);
 
@@ -342,6 +344,7 @@ scheduler(void)
       c->proc = p;
       switchuvm(p);
       p->state = RUNNING;
+      p->cscnt++;
 
       swtch(&(c->scheduler), p->context);
       switchkvm(); //scheduler context starts from here 
@@ -632,3 +635,49 @@ join(void** stack)
   }
 }
 
+int getNumProc(void) {
+  int n = 0;
+  struct proc *p;
+
+  acquire(&ptable.lock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->state != UNUSED) n++;
+  }
+
+  release(&ptable.lock);
+  return n;
+}
+
+int getMaxPid(void) {
+  int n = 0;
+  struct proc *p;
+
+  acquire(&ptable.lock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->state != UNUSED && p->pid > n){
+     n = p->pid;
+    }
+  }
+  release(&ptable.lock);
+  return n;
+}
+
+int getProcInfo(int pid, struct processInfo *pinfo) {
+
+ struct proc *p;
+
+  acquire(&ptable.lock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->pid == pid){
+      if(pid == 1) pinfo->ppid = 0; //parent pid of the init process is 0 by convention 
+      else  pinfo->ppid = p->parent->pid;
+      pinfo->psize = p->sz;
+      pinfo->numberContextSwitches = p->cscnt;
+      release(&ptable.lock);
+      return 0;
+    }
+  }
+      release(&ptable.lock);
+      return -1;
+  
+}

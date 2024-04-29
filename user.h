@@ -1,5 +1,7 @@
+
 struct stat;
 struct rtcdate;
+struct processInfo;
 
 // system calls
 int fork(void);
@@ -27,6 +29,9 @@ int mprotect(void*, int);
 int munprotect(void*, int);
 int clone(void(*)(void*, void*), void*, void*, void*);
 int join(void**);
+int getNumProc(void);
+int getMaxPid(void);
+int getProcInfo(int, struct processInfo*);
 
 // ulib.c
 int stat(const char*, struct stat*);
