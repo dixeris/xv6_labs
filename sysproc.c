@@ -131,3 +131,29 @@ int sys_getProcInfo(void) {
   
   return getProcInfo(pid, pinfo);
 }
+
+int sys_setprio(void) {
+  int prio;
+  if(argint(0, &prio) < 0)
+    return -1;
+  if(prio > 1000) 
+    return -1;
+  setprio(prio);
+  return 0;
+}
+
+int sys_getprio(void) {
+  return getprio();
+}
+
+int sys_welcomeFunction(void){
+  void *fnc;
+  if(argptr(0, (void*)&fnc, sizeof(void(*)(void))) < 0) 
+    return -1;
+  welcomeFunction((void(*)(void))fnc);
+  return 0;
+}
+
+int sys_welcomeDone(void) {
+	return  welcomeDone();
+}

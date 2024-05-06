@@ -126,7 +126,10 @@ int		join(void**);
 int		getNumProc(void);
 int		getMaxPid(void);
 int		getProcInfo(int, struct processInfo*);
-
+void		setprio(int);
+int		getprio(void);
+void		welcomeFunction(void (*)(void));
+int		welcomeDone(void);
 // swtch.S
 void            swtch(struct context**, struct context*);
 

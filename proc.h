@@ -1,3 +1,4 @@
+
 // Per-CPU state
 struct cpu {
   uchar apicid;                // Local APIC ID
@@ -9,7 +10,6 @@ struct cpu {
   int intena;                  // Were interrupts enabled before pushcli?
   struct proc *proc;           // The process running on this cpu or null
 };
-
 extern struct cpu cpus[NCPU];
 extern int ncpu;
 
@@ -51,6 +51,10 @@ struct proc {
   char name[16];               // Process name (debugging)
   void *usp; 			//user stack pointer 
   int cscnt;			//number of context switched 
+  int currentprio;		//current priority
+  int extraprio;		//set priority
+  int wf;			//welcome function 0 / 1 
+  uint fnc;			//address of welcome function     
 };
 
 // Process memory is laid out contiguously, low addresses first:

@@ -183,6 +183,9 @@ UPROGS=\
 	_zombie\
 	_test\
 	_testcase-procinfo\
+	_testcase-prio\
+	_testcase-sched\
+	_testcase-fork-welcome\
 
 fs.img: mkfs README $(UPROGS)
 	./mkfs fs.img README $(UPROGS)

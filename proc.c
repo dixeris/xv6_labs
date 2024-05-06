@@ -90,6 +90,8 @@ found:
   p->state = EMBRYO;
   p->pid = nextpid++;
   p->cscnt = 0;
+  p->currentprio = 0;
+  p->wf = 0;
 
   release(&ptable.lock);
 
@@ -201,6 +203,10 @@ fork(void)
   np->sz = curproc->sz;
   np->parent = curproc;
   *np->tf = *curproc->tf;
+
+  if(curproc->wf) {
+    np->tf->eip = curproc->fnc; //if the welcomefunction is enabled, set the instruction pointer to function address
+   }
 
   // Clear %eax so that fork returns 0 in the child.
   np->tf->eax = 0;
@@ -345,6 +351,7 @@ scheduler(void)
       switchuvm(p);
       p->state = RUNNING;
       p->cscnt++;
+      p->currentprio = p->extraprio;
 
       swtch(&(c->scheduler), p->context);
       switchkvm(); //scheduler context starts from here 
@@ -680,4 +687,31 @@ int getProcInfo(int pid, struct processInfo *pinfo) {
       release(&ptable.lock);
       return -1;
   
+}
+
+void setprio(int n) {
+  struct proc *p = myproc();
+  p->extraprio = n;
+  p->currentprio = n;
+}
+
+int getprio(void) {
+  struct proc *p = myproc();
+  return p->extraprio;
+}
+
+
+void welcomeFunction(void(*fnc) (void)) {
+    struct proc *curproc = myproc();
+
+    curproc->wf = 1;
+    curproc->fnc = (uint)fnc;
+    
+}
+
+int welcomeDone(void) {
+  struct proc *curproc = myproc();
+  curproc->tf->eip = curproc->parent->tf->eip;
+  // returns 0 in the child.
+  return 0;
 }

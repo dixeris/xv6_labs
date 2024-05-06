@@ -1,3 +1,5 @@
+#ifndef x86_h
+#define x86_h
 // Routines to let C code use special x86 instructions.
 
 static inline uchar
@@ -181,3 +183,4 @@ struct trapframe {
   ushort ss;
   ushort padding6;
 };
+#endif

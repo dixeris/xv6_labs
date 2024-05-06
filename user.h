@@ -32,6 +32,10 @@ int join(void**);
 int getNumProc(void);
 int getMaxPid(void);
 int getProcInfo(int, struct processInfo*);
+int setprio(int);
+int  getprio(void);
+int welcomeFunction(void (*) (void));
+int welcomeDone(void);
 
 // ulib.c
 int stat(const char*, struct stat*);
@@ -48,3 +52,4 @@ void free(void*);
 int atoi(const char*);
 int thread_create(void (*)(void*, void*), void*, void*);
 int thread_join(void);
+
