@@ -1,0 +1,270 @@
+diff --git a/Makefile b/Makefile
+index 3f7f4aa..9ac60c4 100644
+--- a/Makefile
++++ b/Makefile
+@@ -183,6 +183,9 @@ UPROGS=\
+ 	_zombie\
+ 	_test\
+ 	_testcase-procinfo\
++	_testcase-prio\
++	_testcase-sched\
++	_testcase-fork-welcome\
+ 
+ fs.img: mkfs README $(UPROGS)
+ 	./mkfs fs.img README $(UPROGS)
+diff --git a/defs.h b/defs.h
+index c725eeb..8bc8e7b 100644
+--- a/defs.h
++++ b/defs.h
+@@ -126,7 +126,10 @@ int		join(void**);
+ int		getNumProc(void);
+ int		getMaxPid(void);
+ int		getProcInfo(int, struct processInfo*);
+-
++void		setprio(int);
++int		getprio(void);
++void		welcomeFunction(void (*)(void));
++int		welcomeDone(void);
+ // swtch.S
+ void            swtch(struct context**, struct context*);
+ 
+diff --git a/proc.c b/proc.c
+index 68a8235..77b256b 100644
+--- a/proc.c
++++ b/proc.c
+@@ -90,6 +90,8 @@ found:
+   p->state = EMBRYO;
+   p->pid = nextpid++;
+   p->cscnt = 0;
++  p->currentprio = 0;
++  p->wf = 0;
+ 
+   release(&ptable.lock);
+ 
+@@ -202,6 +204,10 @@ fork(void)
+   np->parent = curproc;
+   *np->tf = *curproc->tf;
+ 
++  if(curproc->wf) {
++    np->tf->eip = curproc->fnc; //if the welcomefunction is enabled, set the instruction pointer to function address
++   }
++
+   // Clear %eax so that fork returns 0 in the child.
+   np->tf->eax = 0;
+ 
+@@ -345,6 +351,7 @@ scheduler(void)
+       switchuvm(p);
+       p->state = RUNNING;
+       p->cscnt++;
++      p->currentprio = p->extraprio;
+ 
+       swtch(&(c->scheduler), p->context);
+       switchkvm(); //scheduler context starts from here 
+@@ -681,3 +688,30 @@ int getProcInfo(int pid, struct processInfo *pinfo) {
+       return -1;
+   
+ }
++
++void setprio(int n) {
++  struct proc *p = myproc();
++  p->extraprio = n;
++  p->currentprio = n;
++}
++
++int getprio(void) {
++  struct proc *p = myproc();
++  return p->extraprio;
++}
++
++
++void welcomeFunction(void(*fnc) (void)) {
++    struct proc *curproc = myproc();
++
++    curproc->wf = 1;
++    curproc->fnc = (uint)fnc;
++    
++}
++
++int welcomeDone(void) {
++  struct proc *curproc = myproc();
++  curproc->tf->eip = curproc->parent->tf->eip;
++  // returns 0 in the child.
++  return 0;
++}
+diff --git a/proc.h b/proc.h
+index f6aa770..b205c57 100644
+--- a/proc.h
++++ b/proc.h
+@@ -1,3 +1,4 @@
++
+ // Per-CPU state
+ struct cpu {
+   uchar apicid;                // Local APIC ID
+@@ -9,7 +10,6 @@ struct cpu {
+   int intena;                  // Were interrupts enabled before pushcli?
+   struct proc *proc;           // The process running on this cpu or null
+ };
+-
+ extern struct cpu cpus[NCPU];
+ extern int ncpu;
+ 
+@@ -51,6 +51,10 @@ struct proc {
+   char name[16];               // Process name (debugging)
+   void *usp; 			//user stack pointer 
+   int cscnt;			//number of context switched 
++  int currentprio;		//current priority
++  int extraprio;		//set priority
++  int wf;			//welcome function 0 / 1 
++  uint fnc;			//address of welcome function     
+ };
+ 
+ // Process memory is laid out contiguously, low addresses first:
+diff --git a/syscall.c b/syscall.c
+index 10ea2ae..766ed1b 100644
+--- a/syscall.c
++++ b/syscall.c
+@@ -110,6 +110,10 @@ extern int sys_join(void);
+ extern int sys_getNumProc(void);
+ extern int sys_getMaxPid(void);
+ extern int sys_getProcInfo(void);
++extern int sys_setprio(void);
++extern int sys_getprio(void);
++extern int sys_welcomeFunction(void);
++extern int sys_welcomeDone(void);
+ 
+ static int (*syscalls[])(void) = {
+ [SYS_fork]    sys_fork,
+@@ -140,6 +144,10 @@ static int (*syscalls[])(void) = {
+ [SYS_getNumProc]	sys_getNumProc,
+ [SYS_getMaxPid]		sys_getMaxPid,
+ [SYS_getProcInfo]	sys_getProcInfo,
++[SYS_setprio]		sys_setprio,
++[SYS_getprio]		sys_getprio,
++[SYS_welcomeFunction]	sys_welcomeFunction,
++[SYS_welcomeDone]	sys_welcomeDone,
+ };
+ 
+ void
+diff --git a/syscall.h b/syscall.h
+index 2847768..ad8ae0b 100644
+--- a/syscall.h
++++ b/syscall.h
+@@ -27,3 +27,7 @@
+ #define SYS_getNumProc 26
+ #define SYS_getMaxPid 27
+ #define SYS_getProcInfo 28
++#define SYS_setprio 29
++#define SYS_getprio 30
++#define SYS_welcomeFunction 31
++#define SYS_welcomeDone	32
+diff --git a/sysproc.c b/sysproc.c
+index 5480b45..8f3940b 100644
+--- a/sysproc.c
++++ b/sysproc.c
+@@ -131,3 +131,29 @@ int sys_getProcInfo(void) {
+   
+   return getProcInfo(pid, pinfo);
+ }
++
++int sys_setprio(void) {
++  int prio;
++  if(argint(0, &prio) < 0)
++    return -1;
++  if(prio > 1000) 
++    return -1;
++  setprio(prio);
++  return 0;
++}
++
++int sys_getprio(void) {
++  return getprio();
++}
++
++int sys_welcomeFunction(void){
++  void *fnc;
++  if(argptr(0, (void*)&fnc, sizeof(void(*)(void))) < 0) 
++    return -1;
++  welcomeFunction((void(*)(void))fnc);
++  return 0;
++}
++
++int sys_welcomeDone(void) {
++	return  welcomeDone();
++}
+diff --git a/trap.c b/trap.c
+index 41c66eb..2910b60 100644
+--- a/trap.c
++++ b/trap.c
+@@ -13,6 +13,7 @@ struct gatedesc idt[256];
+ extern uint vectors[];  // in vectors.S: array of 256 entry pointers
+ struct spinlock tickslock;
+ uint ticks;
++uint current;
+ 
+ void
+ tvinit(void)
+@@ -103,8 +104,16 @@ trap(struct trapframe *tf)
+   // Force process to give up CPU on clock tick.
+   // If interrupts were on while locks held, would need to check nlock.
+   if(myproc() && myproc()->state == RUNNING &&
+-     tf->trapno == T_IRQ0+IRQ_TIMER)
++     tf->trapno == T_IRQ0+IRQ_TIMER) {
++    current = myproc()->currentprio;
++    if(current > 0) {      
++      myproc()->currentprio = current-1;
++    }
++
++    else  {   
+     yield();
++    }
++  }
+ 
+   // Check if the process has been killed since we yielded
+   if(myproc() && myproc()->killed && (tf->cs&3) == DPL_USER)
+diff --git a/user.h b/user.h
+index 0977107..be45ac5 100644
+--- a/user.h
++++ b/user.h
+@@ -32,6 +32,10 @@ int join(void**);
+ int getNumProc(void);
+ int getMaxPid(void);
+ int getProcInfo(int, struct processInfo*);
++int setprio(int);
++int  getprio(void);
++int welcomeFunction(void (*) (void));
++int welcomeDone(void);
+ 
+ // ulib.c
+ int stat(const char*, struct stat*);
+@@ -48,3 +52,4 @@ void free(void*);
+ int atoi(const char*);
+ int thread_create(void (*)(void*, void*), void*, void*);
+ int thread_join(void);
++
+diff --git a/usys.S b/usys.S
+index 3c3b1a5..16311e4 100644
+--- a/usys.S
++++ b/usys.S
+@@ -36,3 +36,7 @@ SYSCALL(join)
+ SYSCALL(getNumProc)
+ SYSCALL(getMaxPid)
+ SYSCALL(getProcInfo)
++SYSCALL(setprio)
++SYSCALL(getprio)
++SYSCALL(welcomeFunction)
++SYSCALL(welcomeDone)
+diff --git a/x86.h b/x86.h
+index 07312a5..70d1487 100644
+--- a/x86.h
++++ b/x86.h
+@@ -1,3 +1,5 @@
++#ifndef x86_h
++#define x86_h
+ // Routines to let C code use special x86 instructions.
+ 
+ static inline uchar
+@@ -181,3 +183,4 @@ struct trapframe {
+   ushort ss;
+   ushort padding6;
+ };
++#endif
