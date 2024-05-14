@@ -468,3 +468,18 @@ sys_munprotect(void)
   return munprotect((void*)addr,len);
 
 }
+
+int sys_numpp(void) {
+  return numpp();
+}
+
+int sys_numvp(void) {
+  return numvp();
+}
+int sys_mmap(void) {
+  int n;
+  if(argint(0, (int*)&n) < 0) {
+    return -1;
+  }
+  return mmap(n);
+}

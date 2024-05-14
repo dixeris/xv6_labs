@@ -36,7 +36,9 @@ int setprio(int);
 int  getprio(void);
 int welcomeFunction(void (*) (void));
 int welcomeDone(void);
-
+int numpp(void);
+int numvp(void);
+int mmap(int);
 // ulib.c
 int stat(const char*, struct stat*);
 char* strcpy(char*, const char*);

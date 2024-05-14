@@ -31,3 +31,6 @@
 #define SYS_getprio 30
 #define SYS_welcomeFunction 31
 #define SYS_welcomeDone	32
+#define SYS_numpp 33
+#define SYS_mmap 34
+#define SYS_numvp 35

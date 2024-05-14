@@ -38,20 +38,20 @@ walkpgdir(pde_t *pgdir, const void *va, int alloc)
   pde_t *pde;
   pte_t *pgtab;
 
-  pde = &pgdir[PDX(va)];
-  if(*pde & PTE_P){
-    pgtab = (pte_t*)P2V(PTE_ADDR(*pde));
-  } else {
-    if(!alloc || (pgtab = (pte_t*)kalloc()) == 0)
+  pde = &pgdir[PDX(va)]; //first 10 bit of va -> page directory entry 
+  if(*pde & PTE_P){ //if the pde is present, 
+    pgtab = (pte_t*)P2V(PTE_ADDR(*pde)); //upper 20 bit, page table address in which pte resides 
+  } else { //if the page directory entry(page table) is not present, 
+    if(!alloc || (pgtab = (pte_t*)kalloc()) == 0)  //if the alloc bit is 0, return 0 
       return 0;
     // Make sure all those PTE_P bits are zero.
-    memset(pgtab, 0, PGSIZE);
+    memset(pgtab, 0, PGSIZE); //newly allocates page table 
     // The permissions here are overly generous, but they can
     // be further restricted by the permissions in the page table
     // entries, if necessary.
     *pde = V2P(pgtab) | PTE_P | PTE_W | PTE_U;
   }
-  return &pgtab[PTX(va)];
+  return &pgtab[PTX(va)]; //PTX, middle 10 bit which points to PTE location in page table 
 }
 
 // Create PTEs for virtual addresses starting at va that refer to
@@ -435,3 +435,70 @@ munprotect(void* addr, int len)
   return 0;
 }
 
+
+int numvp(void) {
+  struct proc *curproc = myproc();
+  return (curproc->sz)/PGSIZE+1;
+}
+int numpp(void) {
+  pte_t *pte;
+  int cnt = 0; //number of physical page 
+  struct proc *curproc = myproc();
+
+  uint sz = curproc->sz;
+  pde_t *pgdir = curproc->pgdir;
+  
+  uint a = 0;
+  sz = PGROUNDUP(sz);
+  
+  for(;a <= sz; a+=PGSIZE) {
+  pte = walkpgdir(pgdir, (char*)a, 0);
+    if(*pte & PTE_P){
+      cnt++;
+    }
+  }
+  
+  return cnt;
+}
+
+int mmap(int n) {
+  if(n < 0)
+    return 0;
+
+  struct proc *curproc = myproc();
+  pde_t *pgdir = curproc->pgdir;
+  
+  int addr  = curproc->sz;
+  uint old = PGROUNDUP(addr);
+  uint new = (curproc->sz)+n;
+  for(;old < new; old+=PGSIZE) {
+    walkpgdir(pgdir, (char*)old, 1);
+  }
+  curproc->sz += n;
+  switchuvm(curproc);  
+  return addr;
+}
+
+void pgflt(void) {
+  uint val = rcr2(); //control register 2 stores virtual address that causes page fault 
+  struct proc *curproc = myproc();
+  char *mem;
+  uint pa;
+
+  char *addr = (char*)PGROUNDDOWN(val); 
+
+  pte_t *pte;
+  pte = walkpgdir(curproc->pgdir, addr, 0);
+
+  mem = kalloc();
+  if(mem == 0) {
+    cprintf("allocuvm out of memory\n");
+    return;
+  }
+  memset(mem,0,PGSIZE);
+  pa = V2P(mem);
+  int perm = PTE_W | PTE_U;
+  *pte = pa | perm | PTE_P;    
+  
+ // switchuvm(curproc);  
+}

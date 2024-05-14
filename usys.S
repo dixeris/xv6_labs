@@ -40,3 +40,7 @@ SYSCALL(setprio)
 SYSCALL(getprio)
 SYSCALL(welcomeFunction)
 SYSCALL(welcomeDone)
+SYSCALL(numpp)
+SYSCALL(numvp)
+SYSCALL(mmap)
+

@@ -186,6 +186,7 @@ UPROGS=\
 	_testcase-prio\
 	_testcase-sched\
 	_testcase-fork-welcome\
+	_test-mmap\
 
 fs.img: mkfs README $(UPROGS)
 	./mkfs fs.img README $(UPROGS)
