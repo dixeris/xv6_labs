@@ -1,0 +1,266 @@
+diff --git a/Makefile b/Makefile
+index 9ac60c4..2f5e240 100644
+--- a/Makefile
++++ b/Makefile
+@@ -186,6 +186,7 @@ UPROGS=\
+ 	_testcase-prio\
+ 	_testcase-sched\
+ 	_testcase-fork-welcome\
++	_test-mmap\
+ 
+ fs.img: mkfs README $(UPROGS)
+ 	./mkfs fs.img README $(UPROGS)
+diff --git a/defs.h b/defs.h
+index 8bc8e7b..4eec62c 100644
+--- a/defs.h
++++ b/defs.h
+@@ -196,6 +196,9 @@ int             copyout(pde_t*, uint, void*, uint);
+ void            clearpteu(pde_t *pgdir, char *uva);
+ int		mprotect(void*, int);
+ int		munprotect(void*, int);
+-
++int		numpp(void);
++int		numvp(void);
++int		mmap(int);
++void		pgflt(void);
+ // number of elements in fixed-size array
+ #define NELEM(x) (sizeof(x)/sizeof((x)[0]))
+diff --git a/syscall.c b/syscall.c
+index 766ed1b..4c07e4f 100644
+--- a/syscall.c
++++ b/syscall.c
+@@ -114,6 +114,9 @@ extern int sys_setprio(void);
+ extern int sys_getprio(void);
+ extern int sys_welcomeFunction(void);
+ extern int sys_welcomeDone(void);
++extern int sys_numpp(void);
++extern int sys_mmap(void);
++extern int sys_numvp(void);
+ 
+ static int (*syscalls[])(void) = {
+ [SYS_fork]    sys_fork,
+@@ -148,6 +151,9 @@ static int (*syscalls[])(void) = {
+ [SYS_getprio]		sys_getprio,
+ [SYS_welcomeFunction]	sys_welcomeFunction,
+ [SYS_welcomeDone]	sys_welcomeDone,
++[SYS_numpp]		sys_numpp,
++[SYS_mmap]		sys_mmap,
++[SYS_numvp]		sys_numvp,
+ };
+ 
+ void
+diff --git a/syscall.h b/syscall.h
+index ad8ae0b..802ccaa 100644
+--- a/syscall.h
++++ b/syscall.h
+@@ -31,3 +31,6 @@
+ #define SYS_getprio 30
+ #define SYS_welcomeFunction 31
+ #define SYS_welcomeDone	32
++#define SYS_numpp 33
++#define SYS_mmap 34
++#define SYS_numvp 35
+diff --git a/sysfile.c b/sysfile.c
+index a314242..53f2c36 100644
+--- a/sysfile.c
++++ b/sysfile.c
+@@ -468,3 +468,18 @@ sys_munprotect(void)
+   return munprotect((void*)addr,len);
+ 
+ }
++
++int sys_numpp(void) {
++  return numpp();
++}
++
++int sys_numvp(void) {
++  return numvp();
++}
++int sys_mmap(void) {
++  int n;
++  if(argint(0, (int*)&n) < 0) {
++    return -1;
++  }
++  return mmap(n);
++}
+diff --git a/test.c b/test.c
+index cffeec9..1e1029a 100644
+--- a/test.c
++++ b/test.c
+@@ -1,24 +1,13 @@
+ #include "types.h"
+ #include "user.h"
+-#include "processInfo.h"
+ 
+ 
+ int main(void) {
+-  struct processInfo pinfo;  
+-  
+-  printf(1,"number of processes = %d\n", getNumProc());
+-  int maxpid  = getMaxPid(); 
+-  printf(1,"MaxPid among the processes = %d\n", maxpid);
++  uint ret;
++  ret = mmap(4096);
++  char *addr = (char *) ret;
+ 
+-  if(getProcInfo(maxpid,&pinfo) == -1) {
+-    printf(1,"Error: maxpid %d not found\n", maxpid);    
+-  }
+-  printf(1,"cscnt = %d\n", pinfo.numberContextSwitches);
+-
+-  printf(1,"size = %d\n", pinfo.psize);
+-  printf(1,"ppid = %d\n", pinfo.ppid);
+-  
+-
+-  
++  addr[0] = 'a';
++  printf(1,"addr[0] = %c\n", addr[0]);
+ }
+ 
+diff --git a/trap.c b/trap.c
+index 2910b60..c14efb3 100644
+--- a/trap.c
++++ b/trap.c
+@@ -46,8 +46,11 @@ trap(struct trapframe *tf)
+       exit();
+     return;
+   }
+-
++  
+   switch(tf->trapno){
++  case T_PGFLT:
++    pgflt();
++    break;   
+   case T_IRQ0 + IRQ_TIMER:
+     if(cpuid() == 0){
+       acquire(&tickslock);
+diff --git a/user.h b/user.h
+index be45ac5..ad54b31 100644
+--- a/user.h
++++ b/user.h
+@@ -36,7 +36,9 @@ int setprio(int);
+ int  getprio(void);
+ int welcomeFunction(void (*) (void));
+ int welcomeDone(void);
+-
++int numpp(void);
++int numvp(void);
++int mmap(int);
+ // ulib.c
+ int stat(const char*, struct stat*);
+ char* strcpy(char*, const char*);
+diff --git a/usys.S b/usys.S
+index 16311e4..456f509 100644
+--- a/usys.S
++++ b/usys.S
+@@ -40,3 +40,7 @@ SYSCALL(setprio)
+ SYSCALL(getprio)
+ SYSCALL(welcomeFunction)
+ SYSCALL(welcomeDone)
++SYSCALL(numpp)
++SYSCALL(numvp)
++SYSCALL(mmap)
++
+diff --git a/vm.c b/vm.c
+index 5766ba7..5acbaf5 100644
+--- a/vm.c
++++ b/vm.c
+@@ -38,20 +38,20 @@ walkpgdir(pde_t *pgdir, const void *va, int alloc)
+   pde_t *pde;
+   pte_t *pgtab;
+ 
+-  pde = &pgdir[PDX(va)];
+-  if(*pde & PTE_P){
+-    pgtab = (pte_t*)P2V(PTE_ADDR(*pde));
+-  } else {
+-    if(!alloc || (pgtab = (pte_t*)kalloc()) == 0)
++  pde = &pgdir[PDX(va)]; //first 10 bit of va -> page directory entry 
++  if(*pde & PTE_P){ //if the pde is present, 
++    pgtab = (pte_t*)P2V(PTE_ADDR(*pde)); //upper 20 bit, page table address in which pte resides 
++  } else { //if the page directory entry(page table) is not present, 
++    if(!alloc || (pgtab = (pte_t*)kalloc()) == 0)  //if the alloc bit is 0, return 0 
+       return 0;
+     // Make sure all those PTE_P bits are zero.
+-    memset(pgtab, 0, PGSIZE);
++    memset(pgtab, 0, PGSIZE); //newly allocates page table 
+     // The permissions here are overly generous, but they can
+     // be further restricted by the permissions in the page table
+     // entries, if necessary.
+     *pde = V2P(pgtab) | PTE_P | PTE_W | PTE_U;
+   }
+-  return &pgtab[PTX(va)];
++  return &pgtab[PTX(va)]; //PTX, middle 10 bit which points to PTE location in page table 
+ }
+ 
+ // Create PTEs for virtual addresses starting at va that refer to
+@@ -435,3 +435,70 @@ munprotect(void* addr, int len)
+   return 0;
+ }
+ 
++
++int numvp(void) {
++  struct proc *curproc = myproc();
++  return (curproc->sz)/PGSIZE+1;
++}
++int numpp(void) {
++  pte_t *pte;
++  int cnt = 0; //number of physical page 
++  struct proc *curproc = myproc();
++
++  uint sz = curproc->sz;
++  pde_t *pgdir = curproc->pgdir;
++  
++  uint a = 0;
++  sz = PGROUNDUP(sz);
++  
++  for(;a <= sz; a+=PGSIZE) {
++  pte = walkpgdir(pgdir, (char*)a, 0);
++    if(*pte & PTE_P){
++      cnt++;
++    }
++  }
++  
++  return cnt;
++}
++
++int mmap(int n) {
++  if(n < 0)
++    return 0;
++
++  struct proc *curproc = myproc();
++  pde_t *pgdir = curproc->pgdir;
++  
++  int addr  = curproc->sz;
++  uint old = PGROUNDUP(addr);
++  uint new = (curproc->sz)+n;
++  for(;old < new; old+=PGSIZE) {
++    walkpgdir(pgdir, (char*)old, 1);
++  }
++  curproc->sz += n;
++  switchuvm(curproc);  
++  return addr;
++}
++
++void pgflt(void) {
++  uint val = rcr2(); //control register 2 stores virtual address that causes page fault 
++  struct proc *curproc = myproc();
++  char *mem;
++  uint pa;
++
++  char *addr = (char*)PGROUNDDOWN(val); 
++
++  pte_t *pte;
++  pte = walkpgdir(curproc->pgdir, addr, 0);
++
++  mem = kalloc();
++  if(mem == 0) {
++    cprintf("allocuvm out of memory\n");
++    return;
++  }
++  memset(mem,0,PGSIZE);
++  pa = V2P(mem);
++  int perm = PTE_W | PTE_U;
++  *pte = pa | perm | PTE_P;    
++  
++ // switchuvm(curproc);  
++}
