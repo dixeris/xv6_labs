@@ -1,0 +1,253 @@
+diff --git a/defs.h b/defs.h
+index 4eec62c..82f5984 100644
+--- a/defs.h
++++ b/defs.h
+@@ -69,6 +69,9 @@ char*           kalloc(void);
+ void            kfree(char*);
+ void            kinit1(void*, void*);
+ void            kinit2(void*, void*);
++uint		get_refcnt(uint);
++void		incre_refcnt(uint);
++void		decre_refcnt(uint);
+ 
+ // kbd.c
+ void            kbdintr(void);
+diff --git a/kalloc.c b/kalloc.c
+index 14cd4f4..9033a4b 100644
+--- a/kalloc.c
++++ b/kalloc.c
+@@ -9,10 +9,10 @@
+ #include "mmu.h"
+ #include "spinlock.h"
+ 
++uint refcnt[PPX(PHYSTOP)];
+ void freerange(void *vstart, void *vend);
+ extern char end[]; // first address after kernel loaded from ELF file
+                    // defined by the kernel linker script in kernel.ld
+-
+ struct run {
+   struct run *next;
+ };
+@@ -23,6 +23,19 @@ struct {
+   struct run *freelist;
+ } kmem;
+ 
++uint get_refcnt(uint a) {
++
++  return refcnt[PPX(a)];
++}
++
++void decre_refcnt(uint a) {
++  refcnt[PPX(a)]--;
++}
++
++void incre_refcnt(uint a) {
++  refcnt[PPX(a)]++;
++}
++
+ // Initialization happens in two phases.
+ // 1. main() calls kinit1() while still using entrypgdir to place just
+ // the pages mapped by entrypgdir on free list.
+@@ -48,8 +61,10 @@ freerange(void *vstart, void *vend)
+ {
+   char *p;
+   p = (char*)PGROUNDUP((uint)vstart);
+-  for(; p + PGSIZE <= (char*)vend; p += PGSIZE)
++  for(; p + PGSIZE <= (char*)vend; p += PGSIZE) {
++    refcnt[PPX(V2P(p))] = 0;
+     kfree(p);
++  }
+ }
+ //PAGEBREAK: 21
+ // Free the page of physical memory pointed at by v,
+@@ -63,15 +78,23 @@ kfree(char *v)
+ 
+   if((uint)v % PGSIZE || v < end || V2P(v) >= PHYSTOP)
+     panic("kfree");
++  
++  if(kmem.use_lock)
++    acquire(&kmem.lock);
+ 
++  if(get_refcnt(V2P(v)) > 0) {
++    decre_refcnt(V2P(v));    
++  } 
++  
++  if (get_refcnt(V2P(v)) == 0) {
+   // Fill with junk to catch dangling refs.
+   memset(v, 1, PGSIZE);
+ 
+-  if(kmem.use_lock)
+-    acquire(&kmem.lock);
+   r = (struct run*)v;
+   r->next = kmem.freelist;
+-  kmem.freelist = r;
++  kmem.freelist = r; 
++  }
++
+   if(kmem.use_lock)
+     release(&kmem.lock);
+ }
+@@ -84,13 +107,22 @@ kalloc(void)
+ {
+   struct run *r;
+ 
+-  if(kmem.use_lock)
+-    acquire(&kmem.lock);
++  if(kmem.use_lock) {
++   acquire(&kmem.lock);
++  }
++
+   r = kmem.freelist;
+-  if(r)
++  if(r)  {
+     kmem.freelist = r->next;
+-  if(kmem.use_lock)
++    incre_refcnt(V2P(r));
++  }
++
++  
++
++  if(kmem.use_lock) {
+     release(&kmem.lock);
++  }
++
+   return (char*)r;
+ }
+ 
+diff --git a/mmu.h b/mmu.h
+index a82d8e2..7c1d9b4 100644
+--- a/mmu.h
++++ b/mmu.h
+@@ -76,6 +76,9 @@ struct segdesc {
+ // page table index
+ #define PTX(va)         (((uint)(va) >> PTXSHIFT) & 0x3FF)
+ 
++// physical page number index
++#define PPX(pa)		((pa) >> PTXSHIFT)
++
+ // construct virtual address from indexes and offset
+ #define PGADDR(d, t, o) ((uint)((d) << PDXSHIFT | (t) << PTXSHIFT | (o)))
+ 
+diff --git a/spinlock.c b/spinlock.c
+index 4020186..1d646dc 100644
+--- a/spinlock.c
++++ b/spinlock.c
+@@ -23,7 +23,7 @@ initlock(struct spinlock *lk, char *name)
+ // other CPUs to waste time spinning to acquire it.
+ void
+ acquire(struct spinlock *lk)
+-{
++{  
+   pushcli(); // disable interrupts to avoid deadlock.
+   if(holding(lk))
+     panic("acquire");
+diff --git a/test.c b/test.c
+index 1e1029a..6702c2d 100644
+--- a/test.c
++++ b/test.c
+@@ -3,11 +3,6 @@
+ 
+ 
+ int main(void) {
+-  uint ret;
+-  ret = mmap(4096);
+-  char *addr = (char *) ret;
+-
+-  addr[0] = 'a';
+-  printf(1,"addr[0] = %c\n", addr[0]);
++  exit();
+ }
+ 
+diff --git a/vm.c b/vm.c
+index 5acbaf5..5485697 100644
+--- a/vm.c
++++ b/vm.c
+@@ -7,6 +7,7 @@
+ #include "proc.h"
+ #include "elf.h"
+ 
++extern uint refcnt[]; //defined by kalloc.c, reference count of the physical page; for CoW fork 
+ extern char data[];  // defined by kernel.ld
+ pde_t *kpgdir;  // for use in scheduler()
+ 
+@@ -318,7 +319,7 @@ copyuvm(pde_t *pgdir, uint sz)
+   pde_t *d;
+   pte_t *pte;
+   uint pa, i, flags;
+-  char *mem;
++//  char *mem;
+ 
+   if((d = setupkvm()) == 0)
+     return 0;
+@@ -327,16 +328,20 @@ copyuvm(pde_t *pgdir, uint sz)
+       panic("copyuvm: pte should exist");
+     if(!(*pte & PTE_P))
+       panic("copyuvm: page not present");
++    *pte &= (~PTE_W);    //disable write permission on the page 
+     pa = PTE_ADDR(*pte);
+     flags = PTE_FLAGS(*pte);
+-    if((mem = kalloc()) == 0)
+-      goto bad;
+-    memmove(mem, (char*)P2V(pa), PGSIZE);
+-    if(mappages(d, (void*)i, PGSIZE, V2P(mem), flags) < 0) {
+-      kfree(mem);
++//   if((mem = kalloc()) == 0)
++//     goto bad;
++//   memmove(mem, (char*)P2V(pa), PGSIZE);
++    incre_refcnt(pa); //must provide without V2P because pa is already physical address
++    if(mappages(d, (void*)i, PGSIZE, pa, flags) < 0) { //initially shares the physical memory 
++//      kfree(mem);
+       goto bad;
+     }
++    
+   }
++  lcr3(V2P(pgdir));
+   return d;
+ 
+ bad:
+@@ -480,25 +485,28 @@ int mmap(int n) {
+ }
+ 
+ void pgflt(void) {
+-  uint val = rcr2(); //control register 2 stores virtual address that causes page fault 
+-  struct proc *curproc = myproc();
+-  char *mem;
+-  uint pa;
++  uint va = rcr2(); //control register 2 stores virtual address that causes page fault 
+ 
+-  char *addr = (char*)PGROUNDDOWN(val); 
+-
+-  pte_t *pte;
+-  pte = walkpgdir(curproc->pgdir, addr, 0);
++  struct proc *curproc = myproc();
++  pte_t *pte;    
++  pte = walkpgdir(curproc->pgdir, (char*)va, 0);
++  uint pa = PTE_ADDR(*pte);
++  uint rc = get_refcnt(pa);
++
++  if(rc > 1) {   
++    char *mem;
++    if((mem = kalloc()) == 0) { 
++      return;
++    }
++    memmove(mem, (char*)P2V(pa), PGSIZE);
++    *pte = V2P(mem) | PTE_P | PTE_W | PTE_U;
++    decre_refcnt(pa);
++  }
+ 
+-  mem = kalloc();
+-  if(mem == 0) {
+-    cprintf("allocuvm out of memory\n");
+-    return;
++  else if (rc == 1) { //if the last process traps into the page fault, just enabling the write permission 
++    *pte |= PTE_W;
+   }
+-  memset(mem,0,PGSIZE);
+-  pa = V2P(mem);
+-  int perm = PTE_W | PTE_U;
+-  *pte = pa | perm | PTE_P;    
+   
+- // switchuvm(curproc);  
++
++  lcr3(V2P(curproc->pgdir)); 
+ }
