@@ -76,6 +76,9 @@ struct segdesc {
 // page table index
 #define PTX(va)         (((uint)(va) >> PTXSHIFT) & 0x3FF)
 
+// physical page number index
+#define PPX(pa)		((pa) >> PTXSHIFT)
+
 // construct virtual address from indexes and offset
 #define PGADDR(d, t, o) ((uint)((d) << PDXSHIFT | (t) << PTXSHIFT | (o)))
 

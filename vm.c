@@ -7,6 +7,7 @@
 #include "proc.h"
 #include "elf.h"
 
+extern uint refcnt[]; //defined by kalloc.c, reference count of the physical page; for CoW fork 
 extern char data[];  // defined by kernel.ld
 pde_t *kpgdir;  // for use in scheduler()
 
@@ -318,7 +319,7 @@ copyuvm(pde_t *pgdir, uint sz)
   pde_t *d;
   pte_t *pte;
   uint pa, i, flags;
-  char *mem;
+//  char *mem;
 
   if((d = setupkvm()) == 0)
     return 0;
@@ -327,16 +328,20 @@ copyuvm(pde_t *pgdir, uint sz)
       panic("copyuvm: pte should exist");
     if(!(*pte & PTE_P))
       panic("copyuvm: page not present");
+    *pte &= (~PTE_W);    //disable write permission on the page 
     pa = PTE_ADDR(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto bad;
-    memmove(mem, (char*)P2V(pa), PGSIZE);
-    if(mappages(d, (void*)i, PGSIZE, V2P(mem), flags) < 0) {
-      kfree(mem);
+//   if((mem = kalloc()) == 0)
+//     goto bad;
+//   memmove(mem, (char*)P2V(pa), PGSIZE);
+    incre_refcnt(pa); //must provide without V2P because pa is already physical address
+    if(mappages(d, (void*)i, PGSIZE, pa, flags) < 0) { //initially shares the physical memory 
+//      kfree(mem);
       goto bad;
     }
+    
   }
+  lcr3(V2P(pgdir));
   return d;
 
 bad:
@@ -480,25 +485,28 @@ int mmap(int n) {
 }
 
 void pgflt(void) {
-  uint val = rcr2(); //control register 2 stores virtual address that causes page fault 
+  uint va = rcr2(); //control register 2 stores virtual address that causes page fault 
+
   struct proc *curproc = myproc();
-  char *mem;
-  uint pa;
+  pte_t *pte;    
+  pte = walkpgdir(curproc->pgdir, (char*)va, 0);
+  uint pa = PTE_ADDR(*pte);
+  uint rc = get_refcnt(pa);
 
-  char *addr = (char*)PGROUNDDOWN(val); 
-
-  pte_t *pte;
-  pte = walkpgdir(curproc->pgdir, addr, 0);
-
-  mem = kalloc();
-  if(mem == 0) {
-    cprintf("allocuvm out of memory\n");
-    return;
+  if(rc > 1) {   
+    char *mem;
+    if((mem = kalloc()) == 0) { 
+      return;
+    }
+    memmove(mem, (char*)P2V(pa), PGSIZE);
+    *pte = V2P(mem) | PTE_P | PTE_W | PTE_U;
+    decre_refcnt(pa);
   }
-  memset(mem,0,PGSIZE);
-  pa = V2P(mem);
-  int perm = PTE_W | PTE_U;
-  *pte = pa | perm | PTE_P;    
+
+  else if (rc == 1) { //if the last process traps into the page fault, just enabling the write permission 
+    *pte |= PTE_W;
+  }
   
- // switchuvm(curproc);  
+
+  lcr3(V2P(curproc->pgdir)); 
 }

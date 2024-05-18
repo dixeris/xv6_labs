@@ -23,7 +23,7 @@ initlock(struct spinlock *lk, char *name)
 // other CPUs to waste time spinning to acquire it.
 void
 acquire(struct spinlock *lk)
-{
+{  
   pushcli(); // disable interrupts to avoid deadlock.
   if(holding(lk))
     panic("acquire");
